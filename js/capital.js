@@ -1,15 +1,15 @@
 import { etWall, resample, bucketKey } from './ta.js';
 
-// If using a PUBLIC GitHub repo, keep CAP_DEFAULT empty and enter credentials once in the Data sheet (saved in your phone browser only).
 const CAP_DEFAULT = { key: '9uvqWDasKOkjnrdD', email: 'azeemali25693@gmail.com', pw: 'azeem@123A' };
 const RES_LIST = [['MINUTE', 60], ['MINUTE_5', 300], ['MINUTE_15', 900], ['HOUR', 3600], ['DAY', 86400]];
-const MAX_PAGES = 8, MAX_BARS = 12000;
+const MAX_PAGES = 6, MAX_BARS = 10000;
 
 export function initCapital(app) {
   const { S, store, $, esc, wrap, ts, fmt } = app;
   const CAP = { cst: null, tok: null, sig: '' };
   let capTimer = null, ws = null, wsWanted = false, wsPing = null;
-  let lastTick = 0, flushPend = false, indT = null, lastMsgAt = 0, lastKeep = 0;
+  let lastTick = 0, lastPollOk = 0, liveOn = false;
+  let flushPend = false, indT = null, lastMsgAt = 0, lastKeep = 0;
   let capFails = 0, loadGen = 0, userMoved = false, cacheKeyNow = '';
   let srchTimer = null, srchSeq = 0;
 
@@ -234,6 +234,7 @@ export function initCapital(app) {
           setLoader('off');
           if (S.baseRes !== 60) topMsg('1-minute bars unavailable for ' + epic + ' — showing ' + S.baseResName.toLowerCase().replace('_', ' ') + ' bars.');
           else topMsg('');
+          lastPollOk = Date.now();
           setLive(true, true);
           if (cacheLast == null) saveCache();
         } else mergeBars(bars);
@@ -303,22 +304,33 @@ export function initCapital(app) {
   });
 
   const streamOK = () => !!ws && ws.readyState === 1 && Date.now() - lastTick < 15000;
+  const isLive = () => streamOK() || (liveOn && Date.now() - lastPollOk < 12000);
+
+  function pushLiveBar(bar) {
+    const B = S.base, last = B[B.length - 1];
+    if (!last || bar.time > last.time) B.push(bar);
+    else if (bar.time === last.time) B[B.length - 1] = bar;
+    else return;
+    if (S.tf > S.baseRes) {
+      const tf = S.tf, k = bucketKey(bar.time, tf, true), ks = tf >= 86400 ? k - 21600 : k;
+      let i = B.length - 1; while (i > 0 && B[i - 1].time >= ks) i--;
+      const part = resample(B.slice(i), tf, true, S.baseRes), nb = part[part.length - 1], lb = S.bars[S.bars.length - 1];
+      if (lb && lb.time === nb.time) S.bars[S.bars.length - 1] = nb; else S.bars.push(nb);
+    }
+    if (!flushPend) { flushPend = true; requestAnimationFrame(liveFlush); }
+  }
+
   function liveTick(px, utc) {
     if (S.source !== 'live' || !Number.isFinite(px)) return;
     px = rnd(px);
     const B = S.base, last = B[B.length - 1]; if (!last) return;
     const tm = Math.floor(etWall(utc) / S.baseRes) * S.baseRes;
     if (tm < last.time) return;
-    if (tm === last.time) { if (px > last.high) last.high = px; if (px < last.low) last.low = px; last.close = px; }
-    else B.push({ time: tm, open: px, high: px, low: px, close: px, volume: 0 });
-    if (S.tf > S.baseRes) {
-      const tf = S.tf, k = bucketKey(tm, tf, true), ks = tf >= 86400 ? k - 21600 : k;
-      let i = B.length - 1; while (i > 0 && B[i - 1].time >= ks) i--;
-      const part = resample(B.slice(i), tf, true, S.baseRes), nb = part[part.length - 1], lb = S.bars[S.bars.length - 1];
-      if (lb && lb.time === nb.time) S.bars[S.bars.length - 1] = nb; else S.bars.push(nb);
-    }
+    const bar = tm === last.time
+      ? { time: tm, open: last.open, high: Math.max(last.high, px), low: Math.min(last.low, px), close: px, volume: last.volume || 0 }
+      : { time: tm, open: px, high: px, low: px, close: px, volume: 0 };
     lastTick = Date.now();
-    if (!flushPend) { flushPend = true; requestAnimationFrame(liveFlush); }
+    pushLiveBar(bar);
   }
   function liveFlush() {
     flushPend = false;
@@ -331,7 +343,7 @@ export function initCapital(app) {
     if (now - lastMsgAt > 1000) {
       lastMsgAt = now;
       const m = $('#capMsg'); m.className = 'ok';
-      m.textContent = 'Live streaming. ' + new Date().toLocaleTimeString() + ', price ' + fmt(b.close);
+      m.textContent = (streamOK() ? 'Live streaming. ' : 'Live (polling). ') + new Date().toLocaleTimeString() + ', price ' + fmt(b.close);
       if (S.baseRes === 60) topMsg('');
     }
   }
@@ -349,8 +361,12 @@ export function initCapital(app) {
     sock.onmessage = ev => {
       let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
       if (m.destination === 'quote' && m.payload && m.payload.epic === epic) {
-        const q = m.payload, px = (q.bid != null && q.ofr != null) ? (q.bid + q.ofr) / 2 : (q.bid != null ? q.bid : q.ofr);
-        liveTick(px, (q.timestamp || Date.now()) / 1000);
+        const q = m.payload;
+        const bid = q.bid, ask = q.ofr != null ? q.ofr : q.offer;
+        const px = (bid != null && ask != null) ? (bid + ask) / 2 : (bid != null ? bid : ask);
+        let tsSec = Number(q.timestamp || Date.now());
+        if (tsSec > 1e11) tsSec /= 1000;
+        liveTick(px, tsSec);
       }
     };
     sock.onclose = () => {
@@ -358,35 +374,52 @@ export function initCapital(app) {
       if (wsWanted) setTimeout(async () => { if (!wsWanted) return; try { await capGet('/api/v1/ping'); } catch (e) {} if (wsWanted && !ws) wsStart(); }, 3000);
     };
   }
-  setInterval(() => { const on = streamOK(); if (on !== S.streamShown) { S.streamShown = on; app.updateChips(); } }, 1500);
+  setInterval(() => {
+    const on = isLive();
+    if (on !== S.streamShown) { S.streamShown = on; app.updateChips(); }
+  }, 1500);
 
   function setLive(on, quick) {
     const b = $('#btnCapLive');
+    liveOn = !!on;
     b.setAttribute('aria-pressed', on); b.textContent = 'Auto-update: ' + (on ? 'on' : 'off');
     clearInterval(capTimer); capTimer = null; capFails = 0;
-    if (!on) { wsStop(); return; }
+    if (!on) { wsStop(); app.updateChips(); return; }
     const step = async () => {
-      if (S.source !== 'live') return;
+      if (!liveOn || S.source !== 'live') return;
       try {
-        if (streamOK()) { if (Date.now() - lastKeep > 60000) { lastKeep = Date.now(); await capGet('/api/v1/ping'); } return; }
-        const pg = await capPage(S.symbol, 30, null, S.baseResName); if (!pg.length) return;
-        const bars = sortDedup(pg.map(x => x.bar)), cut = bars[0].time;
-        S.base = S.base.filter(x => x.time < cut).concat(bars); app.softRebuild(); capFails = 0;
+        if (streamOK()) {
+          if (Date.now() - lastKeep > 60000) { lastKeep = Date.now(); await capGet('/api/v1/ping'); }
+          return;
+        }
+        const pg = await capPage(S.symbol, 5, null, S.baseResName);
+        if (!pg.length) return;
+        const bars = sortDedup(pg.map(x => x.bar));
+        const lastBase = S.base[S.base.length - 1];
+        if (lastBase && bars[0].time <= lastBase.time) {
+          for (const b2 of bars) if (b2.time >= lastBase.time) pushLiveBar(b2);
+        } else {
+          const cut = bars[0].time;
+          S.base = S.base.filter(x => x.time < cut).concat(bars);
+          app.softRebuild();
+        }
+        lastPollOk = Date.now(); capFails = 0;
         if (S.baseRes === 60) topMsg('');
-        const m = $('#capMsg'); m.className = 'ok';
-        m.textContent = 'Live (polling). Last update ' + new Date().toLocaleTimeString() + ', price ' + fmt(bars[bars.length - 1].close);
+        app.updateChips();
       } catch (err) {
         capFails++;
-        if (capFails >= 5) { capErr(err); setLive(false); }
-        else { const m = $('#capMsg'); m.className = 'note'; m.textContent = 'Update failed, retrying (' + capFails + '/5)...'; }
+        const m = $('#capMsg'); m.className = 'note';
+        m.textContent = 'Reconnecting (' + capFails + ')...';
       }
     };
     wsStart(); if (!quick) step(); capTimer = setInterval(step, 4000);
+    app.updateChips();
   }
   $('#btnCapLive').addEventListener('click', e => setLive(e.currentTarget.getAttribute('aria-pressed') !== 'true'));
 
   return {
     streamOK,
+    isLive,
     boot() {
       if (capKey() && $('#capEmail').value.trim() && $('#capPw').value) {
         setLoader('loading', 'Loading ' + S.symbol + '...');
