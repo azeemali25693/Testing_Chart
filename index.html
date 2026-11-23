@@ -1,0 +1,116 @@
+<!-- v3-clean-topbar -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Nasdaq Chart Lab</title>
+  <link rel="preconnect" href="https://api-capital.backend-capital.com">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="app">
+  <header class="top gut">
+    <div class="sym">
+      <button id="symName" class="symbtn" type="button" aria-label="Search market">US100</button>
+      <span class="chip demo" id="srcChip">Loading</span>
+    </div>
+  </header>
+
+  <div id="capBar" class="gut" hidden></div>
+  <div class="tfrow gut" id="tfrow" role="group" aria-label="Timeframe"></div>
+
+  <main id="chartWrap">
+    <div id="chart"></div>
+    <canvas id="ov"></canvas>
+    <div id="hint" hidden></div>
+    <div id="loader">
+      <div class="spin" id="spin" role="status" aria-label="Loading"></div>
+      <p id="ldTxt">Loading...</p>
+      <div class="line" id="ldBtns" hidden style="justify-content:center;flex:none">
+        <button class="btn pri" id="ldRetry" type="button">Retry</button>
+        <button class="btn" id="ldData" type="button">Open Data</button>
+      </div>
+    </div>
+  </main>
+
+  <div id="selbar" class="gut" hidden></div>
+  <nav class="dock gut" id="dock" aria-label="Drawing tools"></nav>
+
+  <div id="srchBack" hidden></div>
+  <section id="srch" hidden aria-label="Search market">
+    <div class="srch-bar gut">
+      <input id="srchIn" type="search" placeholder="Search market: nasdaq, gold, bitcoin, EURUSD..." autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button class="btn sm" id="srchX" type="button">Close</button>
+    </div>
+    <div id="srchRes" class="gut"></div>
+  </section>
+
+  <section class="sheet" id="shData" hidden>
+    <div class="sheet-back" data-close></div>
+    <div class="sheet-body">
+      <div class="sheet-head gut">
+        <h2>Data</h2>
+        <button class="btn sm" data-close type="button">Close</button>
+      </div>
+      <div class="sheet-scroll gut">
+        <p class="note" id="dataInfo"></p>
+        <h3>Capital.com live data</h3>
+        <p class="note">Enter your Capital.com API key, login email, and API key password. Saved in this browser only.</p>
+        <div class="line">
+          <label class="field" for="capKey">API key<input id="capKey" type="password" autocomplete="off" spellcheck="false"></label>
+          <label class="field" for="capEmail">Login email<input id="capEmail" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        </div>
+        <div class="line">
+          <label class="field" for="capPw">API key password<input id="capPw" type="password" autocomplete="off" spellcheck="false"></label>
+          <label class="field" for="capEpic">Market (tap the name at the top to change)<input id="capEpic" type="text" value="US100" readonly></label>
+        </div>
+        <div class="line">
+          <button class="btn pri" id="btnCap" type="button">Load last ~5 days</button>
+          <button class="btn" id="btnCapLive" type="button" aria-pressed="false">Auto-update: off</button>
+          <button class="btn" id="capDemo" type="button" aria-pressed="false">Demo account: off</button>
+        </div>
+        <div id="capMsg" class="note"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+function __bar(t){var d=document.getElementById('errBar');if(!d){d=document.createElement('div');d.id='errBar';d.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99;background:#b00020;color:#fff;font:12px/1.4 monospace;padding:10px;white-space:pre-wrap;max-height:45%;overflow:auto';(document.body||document.documentElement).appendChild(d)}d.textContent+=t+'\n'}
+window.addEventListener('error',function(e){if(e.target&&e.target.tagName==='SCRIPT'){if(/lightweight-charts/.test(e.target.src||''))return;__bar('Could not load: '+(e.target.src||''));return}__bar('JS error: '+(e.message||'')+(e.lineno?' (line '+e.lineno+')':''))},true);
+window.addEventListener('unhandledrejection',function(e){__bar('Error: '+(e.reason&&e.reason.message||e.reason))});
+</script>
+<script>
+(function(){
+  var F='lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js';
+  var U=[
+    ['https://cdn.jsdelivr.net/npm/'+F,0],
+    ['https://cdnjs.cloudflare.com/ajax/libs/lightweight-charts/5.0.8/lightweight-charts.standalone.production.js',0],
+    ['https://unpkg.com/'+F,1500],
+    ['https://fastly.jsdelivr.net/npm/'+F,3000]
+  ];
+  var fails=0;
+  function ready(){if(window.__libReady||!window.LightweightCharts)return;window.__libReady=true;if(window.__nclStart)window.__nclStart()}
+  function allFailed(){
+    var t=document.getElementById('ldTxt'),s=document.getElementById('spin');
+    if(t){t.textContent='The chart library could not be downloaded from any server. Check internet/VPN/DNS and reload.';t.parentNode.className='err'}
+    if(s)s.hidden=true;
+  }
+  U.forEach(function(u){
+    setTimeout(function(){
+      if(window.__libReady)return;
+      var s=document.createElement('script');s.src=u[0];s.async=true;
+      s.onload=ready;
+      s.onerror=function(){fails++;if(fails>=U.length&&!window.__libReady)allFailed()};
+      document.head.appendChild(s);
+    },u[1]);
+  });
+})();
+</script>
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>
