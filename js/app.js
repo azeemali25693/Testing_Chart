@@ -81,15 +81,22 @@ async function boot() {
   });
   const candle = chart.addSeries(LW.CandlestickSeries, {
     ...CANDLE_STYLE,
+    lastValueVisible: false,
+    priceLineVisible: true,
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
   });
   const ts = chart.timeScale();
   let indSeries = [], indMeta = [], indLen = 0, markersApi = null, crossActive = false;
   let drawings = null, cap = null;
 
-  /* ---------- TradingView-style Candle Countdown Badge ---------- */
+  /* ---------- Unified Dynamic Price + Countdown Badge ---------- */
   const cdEl = document.createElement('div');
-  cdEl.style.cssText = 'position:absolute;right:0;z-index:12;pointer-events:none;background:#131722;color:#ffffff;font:500 11px/16px ' + mono + ';text-align:center;border-radius:0 0 3px 3px;padding:0 4px;display:none;font-variant-numeric:tabular-nums';
+  cdEl.style.cssText = 'position:absolute;right:0;z-index:12;pointer-events:none;color:#ffffff;font:500 11px/1.2 ' + mono + ';text-align:center;border-radius:3px 0 0 3px;padding:3px 4px;display:none;font-variant-numeric:tabular-nums;box-sizing:border-box';
+  const cdPx = document.createElement('div');
+  cdPx.style.cssText = 'font-weight:600;line-height:14px;white-space:nowrap';
+  const cdTm = document.createElement('div');
+  cdTm.style.cssText = 'font-size:10px;line-height:13px;opacity:.92;white-space:nowrap';
+  cdEl.append(cdPx, cdTm);
   wrap.appendChild(cdEl);
 
   function fmtCountdown(sec) {
@@ -122,7 +129,7 @@ async function boot() {
     return Date.UTC(y + 1, 0, 1) / 1000 - 21600;
   }
 
-  let lastCdTxt = '', lastCdTop = -1, lastCdW = -1;
+  let lastCdPx = '', lastCdTm = '', lastCdTop = -1, lastCdW = -1, lastCdBg = '';
   function updateCountdown() {
     const last = S.bars[S.bars.length - 1];
     if (!last || S.source !== 'live') { cdEl.style.display = 'none'; return; }
@@ -134,15 +141,19 @@ async function boot() {
       if (Number.isFinite(h) && h > 0) ph = h;
     } catch (e) {}
     if (y == null || !Number.isFinite(y) || pw <= 0) { cdEl.style.display = 'none'; return; }
-    const cy = Math.max(10, Math.min(ph - 10, y));
-    const top = Math.round(cy + 25 <= ph ? cy + 9 : cy - 25);
     const nowWall = etWall(Date.now() / 1000);
-    const txt = fmtCountdown(nextBarCloseWall(S.tf, nowWall) - nowWall);
+    const pxTxt = fmt(last.close);
+    const tmTxt = fmtCountdown(nextBarCloseWall(S.tf, nowWall) - nowWall);
+    const bg = last.close >= last.open ? '#5eb162' : '#000000';
+    if (pxTxt !== lastCdPx) { cdPx.textContent = pxTxt; lastCdPx = pxTxt; }
+    if (tmTxt !== lastCdTm) { cdTm.textContent = tmTxt; lastCdTm = tmTxt; }
+    if (bg !== lastCdBg) { cdEl.style.background = bg; lastCdBg = bg; }
     if (cdEl.style.display !== 'block') cdEl.style.display = 'block';
-    if (txt !== lastCdTxt) { cdEl.textContent = txt; lastCdTxt = txt; }
-    if (top !== lastCdTop) { cdEl.style.top = top + 'px'; lastCdTop = top; }
     const w = Math.round(pw);
     if (w !== lastCdW) { cdEl.style.width = w + 'px'; lastCdW = w; }
+    const hBox = cdEl.offsetHeight || 33;
+    const top = Math.round(Math.max(2, Math.min(ph - hBox - 2, y - hBox / 2)));
+    if (top !== lastCdTop) { cdEl.style.top = top + 'px'; lastCdTop = top; }
   }
 
   function detectPrecision(bars) {
