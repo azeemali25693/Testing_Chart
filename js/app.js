@@ -50,7 +50,7 @@ function boot() {
   const chart = LW.createChart($('#chart'), {
     autoSize: true,
     layout: { background: { type: LW.ColorType.Solid, color: css('--bg') }, textColor: css('--mute'), fontFamily: mono, fontSize: 11 },
-    grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
+    grid: { vertLines: { visible: false }, horzLines: { visible: false } },
     rightPriceScale: { borderColor: css('--line'), scaleMargins: { top: .08, bottom: .08 } },
     timeScale: { borderColor: css('--line'), timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 7, minBarSpacing: 1.5 },
     crosshair: { mode: LW.CrosshairMode.Normal },
@@ -63,7 +63,7 @@ function boot() {
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
   });
   const ts = chart.timeScale();
-  let vol = null, indSeries = [], indMeta = [], indLen = 0, markersApi = null, crossActive = false;
+  let indSeries = [], indMeta = [], indLen = 0, markersApi = null, crossActive = false;
   let drawings = null, cap = null;
 
   function detectPrecision(bars) {
@@ -97,22 +97,11 @@ function boot() {
   function applyTheme() {
     chart.applyOptions({
       layout: { background: { type: LW.ColorType.Solid, color: css('--bg') }, textColor: css('--mute') },
-      grid: { vertLines: { color: css('--grid') }, horzLines: { color: css('--grid') } },
+      grid: { vertLines: { visible: false }, horzLines: { visible: false } },
       rightPriceScale: { borderColor: css('--line') }, timeScale: { borderColor: css('--line') }
     });
     candle.applyOptions({ upColor: css('--up'), downColor: css('--down'), wickUpColor: css('--up'), wickDownColor: css('--down') });
-    setVolume(); renderIndicators(); S.dirty = true;
-  }
-
-  function setVolume() {
-    const has = S.bars.some(b => b.volume > 0);
-    if (!has) { if (vol) { chart.removeSeries(vol); vol = null; } return; }
-    if (!vol) {
-      vol = chart.addSeries(LW.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '', lastValueVisible: false, priceLineVisible: false });
-      vol.priceScale().applyOptions({ scaleMargins: { top: .84, bottom: 0 } });
-    }
-    const up = css('--up') + '66', dn = css('--down') + '66';
-    vol.setData(S.bars.map(b => ({ time: b.time, value: b.volume, color: b.close >= b.open ? up : dn })));
+    renderIndicators(); S.dirty = true;
   }
 
   function setBase(base, source, note) {
@@ -127,7 +116,7 @@ function boot() {
     S.bars = resample(S.base, S.tf, S.source === 'live', S.baseRes);
     if (S.bars.length) applyPricePrecision(S.bars);
     candle.setData(S.bars);
-    setVolume(); renderIndicators();
+    renderIndicators();
     if (fit) {
       resetAutoScale();
       if (S.bars.length) { const n = S.bars.length; ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 }); }
@@ -137,7 +126,7 @@ function boot() {
   function softRebuild() {
     S.bars = resample(S.base, S.tf, S.source === 'live', S.baseRes);
     if (S.bars.length) applyPricePrecision(S.bars);
-    candle.setData(S.bars); setVolume(); indLen = -1; refreshInds();
+    candle.setData(S.bars); indLen = -1; refreshInds();
     showOhlc(S.bars[S.bars.length - 1]); S.dirty = true; updateDataInfo();
   }
   function updateChips() {
@@ -242,7 +231,6 @@ function boot() {
     isCrossActive: () => crossActive,
     updateLiveCandle(b) {
       try { candle.update(b); } catch (e) {}
-      if (vol) { try { vol.update({ time: b.time, value: b.volume, color: (b.close >= b.open ? css('--up') : css('--down')) + '66' }); } catch (e) {} }
     }
   });
 
