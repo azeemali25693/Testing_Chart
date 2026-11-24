@@ -25,6 +25,9 @@ const FIB = [0, .236, .382, .5, .618, .786, 1];
 const MONO = "'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace";
 
 export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart, candle, ts }) {
+  ov.style.zIndex = '10';
+  const hintEl = $('#hint');
+  if (hintEl) hintEl.style.zIndex = '11';
   const ctx = ov.getContext('2d');
   let clearTimer = null;
 
@@ -143,7 +146,10 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     t = Math.max(0, Math.min(1, t));
     return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
   }
-  function screenPts(d) { const P = d.pts.map(pt2s); return P.every(p => p.x != null && p.y != null) ? P : null; }
+  function screenPts(d) {
+    const P = d.pts.map(pt2s);
+    return P.every(p => p.x != null && p.y != null && Number.isFinite(p.x) && Number.isFinite(p.y)) ? P : null;
+  }
   function rayEnd(a, b) { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1; return { x: a.x + dx / l * 6000, y: a.y + dy / l * 6000 }; }
   function hitTest(x, y, touch) {
     const r = touch ? 18 : 10, hr = touch ? 22 : 13, p = { x, y };
