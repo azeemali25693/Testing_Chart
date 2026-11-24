@@ -4,7 +4,7 @@ async function boot() {
   window.__nclStarted = true;
 
   const V = new URL(import.meta.url).search || ('?v=' + Date.now());
-  const [{ ta, resample, bucketKey, etWall }, { initDrawings }, { initCapital }] = await Promise.all([
+  const [{ ta, resample, bucketKey, etWall, resForTf }, { initDrawings }, { initCapital }] = await Promise.all([
     import('./ta.js' + V),
     import('./drawings.js' + V),
     import('./capital.js' + V)
@@ -36,8 +36,12 @@ async function boot() {
     wickDownColor: '#000000'
   };
 
-  const TFS = [['1m', 60], ['2m', 120], ['3m', 180], ['5m', 300], ['15m', 900], ['30m', 1800], ['1h', 3600], ['4h', 14400], ['1D', 86400]];
-  const PAL = ['#f5b942', '#4cc9f0', '#c77dff', '#2dbf8c', '#f0616d', '#ff9f68', '#9aa5b1', '#ffffff'];
+  const TFS = [
+    ['1m', 60], ['2m', 120], ['3m', 180], ['4m', 240], ['5m', 300],
+    ['15m', 900], ['30m', 1800], ['1h', 3600], ['4h', 14400],
+    ['1D', 86400], ['1W', 604800], ['1M', 2592000], ['3M', 7776000], ['6M', 15552000], ['1Y', 31536000]
+  ];
+  const PAL = ['#2563eb', '#000000', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#ffffff'];
   const C1 = b => b.map(x => x.close);
   const IND = {
     SMA: { label: 'SMA', params: [['len', 20]], calc: (b, p) => ({ pane: false, lines: [{ name: 'SMA ' + p.len, data: ta.sma(C1(b), p.len) }] }) },
@@ -137,7 +141,7 @@ async function boot() {
     renderIndicators();
     if (fit) {
       resetAutoScale();
-      if (S.bars.length) { const n = S.bars.length; ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 }); }
+      if (S.bars.length) { const n = S.bars.length; ts.setVisibleLogicalRange({ from: Math.max(0, n - 120), to: n + 8 }); }
     }
     showOhlc(S.bars[S.bars.length - 1]); S.dirty = true; updateDataInfo();
   }
@@ -222,11 +226,12 @@ async function boot() {
   }
 
   function renderTf() {
-    $('#tfrow').innerHTML = TFS.map(([n, s]) => `<button class="tf" data-tf="${s}" type="button" aria-pressed="${s === S.tf}"${s < S.baseRes ? ' disabled' : ''}>${n}</button>`).join('');
+    $('#tfrow').innerHTML = TFS.map(([n, s]) => `<button class="tf" data-tf="${s}" type="button" aria-pressed="${s === S.tf}">${n}</button>`).join('');
   }
   $('#tfrow').addEventListener('click', e => {
-    const b = e.target.closest('[data-tf]'); if (!b || b.disabled) return;
-    S.tf = +b.dataset.tf; store.set('tf', S.tf); renderTf(); rebuild(true);
+    const b = e.target.closest('[data-tf]'); if (!b) return;
+    S.tf = +b.dataset.tf; store.set('tf', S.tf); renderTf();
+    if (cap && cap.switchTf) cap.switchTf(S.tf); else rebuild(true);
   });
 
   function openSheet(id) { $(id).hidden = false; if (id === '#shData') updateDataInfo(); }
@@ -243,13 +248,17 @@ async function boot() {
 
   drawings = initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart, candle, ts });
   cap = initCapital({
-    S, store, $, esc, wrap, ts, fmt, etWall, resample, bucketKey,
+    S, store, $, esc, wrap, ts, fmt, etWall, resample, bucketKey, resForTf,
     setBase, softRebuild, rebuild, setSymbol, resetAutoScale, updateChips, openSheet,
     showOhlc, refreshInds,
     isCrossActive: () => crossActive,
     updateLiveCandle(b) {
       try { candle.update(b); } catch (e) {}
     }
+  });
+
+  ts.subscribeVisibleLogicalRangeChange(r => {
+    if (r && r.from < 25 && cap && cap.loadMore) cap.loadMore();
   });
 
   renderTf(); drawings.renderDock(); applyTheme();
