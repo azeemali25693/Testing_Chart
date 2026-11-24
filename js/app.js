@@ -1,6 +1,6 @@
 import { ta, resample } from './ta.js';
 import { initDrawings } from './drawings.js';
-import { initCapital } from './capital.js';
+import { initCapital } from './capital.js?v=4';
 
 function boot() {
   'use strict';
@@ -142,7 +142,7 @@ function boot() {
   }
   function updateChips() {
     const c = $('#srcChip'), live = S.source === 'live';
-    const isOnline = live && cap && cap.isLive();
+    const isOnline = live && cap && (typeof cap.isLive === 'function' ? cap.isLive() : (typeof cap.streamOK === 'function' && cap.streamOK()));
     c.textContent = live ? (isOnline ? 'LIVE' : 'Sync') : (S.loading ? 'Loading' : 'Offline');
     c.className = 'chip ' + (isOnline ? 'live' : 'demo');
     $('#symName').textContent = S.symbol;
