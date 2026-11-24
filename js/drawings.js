@@ -1,4 +1,4 @@
-const PAL = ['#f5b942', '#4cc9f0', '#c77dff', '#2dbf8c', '#f0616d', '#ff9f68', '#9aa5b1', '#ffffff'];
+const PAL = ['#2563eb', '#000000', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#ffffff'];
 const TOOLS = [
   ['cursor', 'Select', '<path d="M5 3l13 8-6 1.5L9.5 19z"/>'],
   ['trend', 'Line', '<path d="M4 19L20 5"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="5" r="2"/>'],
@@ -50,8 +50,14 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
   const pt2s = p => ({ x: timeToX(p.t), y: candle.priceToCoordinate(p.p) });
   function plotRect() {
     let pw = 0, ph = wrap.clientHeight;
-    try { pw = chart.priceScale('right').width(); ph = chart.panes()[0].getHeight(); } catch (e) {}
-    return { w: wrap.clientWidth - pw, h: ph };
+    try {
+      const w = chart.priceScale('right').width();
+      if (Number.isFinite(w) && w > 0) pw = w;
+      const p0 = chart.panes && chart.panes()[0];
+      const h = p0 && p0.getHeight && p0.getHeight();
+      if (Number.isFinite(h) && h > 0) ph = h;
+    } catch (e) {}
+    return { w: Math.max(0, wrap.clientWidth - pw), h: Math.max(0, ph) };
   }
   const rel = e => { const r = wrap.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   function toPoint(x, y, snap) {
@@ -180,7 +186,7 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     const pt = toPoint(x, y, true); if (!pt) return;
     if (S.creating) { S.creating.d.pts[1] = pt; finishCreate(); return; }
     const d = { id: uid(), type: S.tool, pts: ONE[S.tool] ? [pt] : [pt, { ...pt }], color: PAL[0], width: 2, text: S.tool === 'note' ? 'Note' : '' };
-    S.drawings.push(d);
+    S.drawings.push(d); S.dirty = true;
     if (ONE[S.tool]) { S.creating = { d }; finishCreate(); return; }
     S.creating = { d, sx: x, sy: y, moved: false };
   }
@@ -188,7 +194,7 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
   wrap.addEventListener('pointerdown', e => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const { x, y } = rel(e), pr = plotRect();
-    if (x < 0 || y < 0 || x > pr.w || y > pr.h) return;
+    if (x < 0 || y < 0 || x > pr.w || y > pr.h) { S.taken = false; return; }
     let take = false;
     if (S.tool !== 'cursor') { startCreate(x, y); take = true; S.pt = e.pointerType; }
     else {
@@ -199,11 +205,13 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
         take = true;
       } else if (S.selected) select(null);
     }
-    if (take) { S.taken = true; e.stopPropagation(); e.preventDefault(); }
+    S.taken = take;
+    if (take) { e.stopPropagation(); e.preventDefault(); }
   }, true);
   const guard = e => { if (S.taken) e.stopPropagation(); };
   wrap.addEventListener('touchstart', guard, true);
   wrap.addEventListener('mousedown', guard, true);
+  window.addEventListener('blur', () => { S.taken = false; S.drag = null; });
 
   document.addEventListener('pointermove', e => {
     const { x, y } = rel(e);
@@ -245,7 +253,7 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     ctx.fillStyle = bg; ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(x0, y - h / 2, w, h, 4); else ctx.rect(x0, y - h / 2, w, h);
     ctx.fill();
-    ctx.fillStyle = '#10151c'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x0 + 5, y + .5);
+    ctx.fillStyle = '#ffffff'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x0 + 5, y + .5);
   }
   const fmtDur = s => { s = Math.abs(s); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
 
@@ -259,14 +267,14 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
       case 'hline': line({ x: 0, y: P[0].y }, { x: pr.w, y: P[0].y }); tag(fmt(d.pts[0].p), pr.w - 2, P[0].y, d.color, 'right'); break;
       case 'vline': line({ x: P[0].x, y: 0 }, { x: P[0].x, y: pr.h }); break;
       case 'rect':
-        ctx.globalAlpha = .14; ctx.fillRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
+        ctx.globalAlpha = .16; ctx.fillRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
         ctx.globalAlpha = 1; ctx.strokeRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
         break;
       case 'fib': {
         const x1 = Math.min(P[0].x, P[1].x), x2 = Math.max(P[0].x, P[1].x);
         for (const f of FIB) {
           const pr2 = d.pts[1].p + (d.pts[0].p - d.pts[1].p) * f, y = P[1].y + (P[0].y - P[1].y) * f;
-          ctx.globalAlpha = f === 0 || f === 1 ? 1 : .7; ctx.lineWidth = 1;
+          ctx.globalAlpha = f === 0 || f === 1 ? 1 : .75; ctx.lineWidth = 1;
           ctx.setLineDash(f === 0 || f === 1 ? [] : [4, 4]); line({ x: x1, y }, { x: x2, y });
           ctx.globalAlpha = 1; ctx.setLineDash([]); ctx.fillStyle = d.color;
           ctx.font = '11px ' + MONO; ctx.textBaseline = 'bottom'; ctx.fillText(`${f} · ${fmt(pr2)}`, x1 + 4, y - 2);
@@ -277,7 +285,7 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
       case 'measure': {
         const dp = d.pts[1].p - d.pts[0].p, pc = dp / d.pts[0].p * 100, up = dp >= 0, col = up ? css('--up') : css('--down');
         ctx.strokeStyle = col; ctx.fillStyle = col;
-        ctx.globalAlpha = .12; ctx.fillRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
+        ctx.globalAlpha = .14; ctx.fillRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
         ctx.globalAlpha = 1; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
         ctx.strokeRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y); ctx.setLineDash([]);
         const nb = Math.round((timeToLogical(d.pts[1].t) || 0) - (timeToLogical(d.pts[0].t) || 0));
@@ -289,15 +297,15 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
         const t = d.text || '', w = ctx.measureText(t).width + 12;
         ctx.fillStyle = d.color; ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(P[0].x, P[0].y - 11, w, 22, 5); else ctx.rect(P[0].x, P[0].y - 11, w, 22);
-        ctx.fill(); ctx.fillStyle = '#10151c'; ctx.fillText(t, P[0].x + 6, P[0].y + .5);
+        ctx.fill(); ctx.fillStyle = '#ffffff'; ctx.fillText(t, P[0].x + 6, P[0].y + .5);
         break;
       }
     }
-    if (sel) {
+    if (sel || (S.creating && S.creating.d === d)) {
       ctx.setLineDash([]);
       for (const p of P) {
         ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 6.283);
-        ctx.fillStyle = css('--bg'); ctx.fill();
+        ctx.fillStyle = '#d6dae7'; ctx.fill();
         ctx.lineWidth = 2; ctx.strokeStyle = d.color; ctx.stroke();
       }
     }
