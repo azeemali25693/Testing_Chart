@@ -1,11 +1,14 @@
-import { ta, resample } from './ta.js';
-import { initDrawings } from './drawings.js';
-import { initCapital } from './capital.js?v=4';
-
-function boot() {
+async function boot() {
   'use strict';
   if (window.__nclStarted) return;
   window.__nclStarted = true;
+
+  const V = new URL(import.meta.url).search || ('?v=' + Date.now());
+  const [{ ta, resample, bucketKey, etWall }, { initDrawings }, { initCapital }] = await Promise.all([
+    import('./ta.js' + V),
+    import('./drawings.js' + V),
+    import('./capital.js' + V)
+  ]);
 
   const LW = window.LightweightCharts;
   const $ = s => document.querySelector(s);
@@ -240,7 +243,7 @@ function boot() {
 
   drawings = initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart, candle, ts });
   cap = initCapital({
-    S, store, $, esc, wrap, ts, fmt,
+    S, store, $, esc, wrap, ts, fmt, etWall, resample, bucketKey,
     setBase, softRebuild, rebuild, setSymbol, resetAutoScale, updateChips, openSheet,
     showOhlc, refreshInds,
     isCrossActive: () => crossActive,
