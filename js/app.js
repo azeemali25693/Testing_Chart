@@ -20,6 +20,19 @@ function boot() {
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   if (!LW) return;
 
+  const CHART_BG = '#d6dae7';
+  const AXIS_TXT = '#1e2631';
+  const AXIS_LINE = '#b4bac9';
+  const CANDLE_STYLE = {
+    upColor: '#5eb162',
+    downColor: '#000000',
+    borderVisible: true,
+    borderUpColor: '#6c6c6c',
+    borderDownColor: '#000000',
+    wickUpColor: '#000000',
+    wickDownColor: '#000000'
+  };
+
   const TFS = [['1m', 60], ['2m', 120], ['3m', 180], ['5m', 300], ['15m', 900], ['30m', 1800], ['1h', 3600], ['4h', 14400], ['1D', 86400]];
   const PAL = ['#f5b942', '#4cc9f0', '#c77dff', '#2dbf8c', '#f0616d', '#ff9f68', '#9aa5b1', '#ffffff'];
   const C1 = b => b.map(x => x.close);
@@ -46,20 +59,21 @@ function boot() {
   if (!TFS.some(t => t[1] === S.tf)) S.tf = 60;
 
   const wrap = $('#chartWrap'), ov = $('#ov');
+  wrap.style.background = CHART_BG;
   const mono = "'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace";
   const chart = LW.createChart($('#chart'), {
     autoSize: true,
-    layout: { background: { type: LW.ColorType.Solid, color: css('--bg') }, textColor: css('--mute'), fontFamily: mono, fontSize: 11 },
+    layout: { background: { type: LW.ColorType.Solid, color: CHART_BG }, textColor: AXIS_TXT, fontFamily: mono, fontSize: 11 },
     grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-    rightPriceScale: { borderColor: css('--line'), scaleMargins: { top: .08, bottom: .08 } },
-    timeScale: { borderColor: css('--line'), timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 7, minBarSpacing: 1.5 },
+    rightPriceScale: { borderColor: AXIS_LINE, scaleMargins: { top: .08, bottom: .08 } },
+    timeScale: { borderColor: AXIS_LINE, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 7, minBarSpacing: 1.5 },
     crosshair: { mode: LW.CrosshairMode.Normal },
     kineticScroll: { touch: true, mouse: false },
     handleScale: { axisPressedMouseMove: true, pinch: true },
     localization: { priceFormatter: p => fmt(p) }
   });
   const candle = chart.addSeries(LW.CandlestickSeries, {
-    upColor: css('--up'), downColor: css('--down'), borderVisible: false, wickUpColor: css('--up'), wickDownColor: css('--down'),
+    ...CANDLE_STYLE,
     priceFormat: { type: 'price', precision: 2, minMove: 0.01 }
   });
   const ts = chart.timeScale();
@@ -95,12 +109,13 @@ function boot() {
   function resetAutoScale() { try { chart.priceScale('right').applyOptions({ autoScale: true }); } catch (e) {} }
 
   function applyTheme() {
+    wrap.style.background = CHART_BG;
     chart.applyOptions({
-      layout: { background: { type: LW.ColorType.Solid, color: css('--bg') }, textColor: css('--mute') },
+      layout: { background: { type: LW.ColorType.Solid, color: CHART_BG }, textColor: AXIS_TXT },
       grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-      rightPriceScale: { borderColor: css('--line') }, timeScale: { borderColor: css('--line') }
+      rightPriceScale: { borderColor: AXIS_LINE }, timeScale: { borderColor: AXIS_LINE }
     });
-    candle.applyOptions({ upColor: css('--up'), downColor: css('--down'), wickUpColor: css('--up'), wickDownColor: css('--down') });
+    candle.applyOptions(CANDLE_STYLE);
     renderIndicators(); S.dirty = true;
   }
 
