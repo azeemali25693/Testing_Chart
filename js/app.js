@@ -87,6 +87,64 @@ async function boot() {
   let indSeries = [], indMeta = [], indLen = 0, markersApi = null, crossActive = false;
   let drawings = null, cap = null;
 
+  /* ---------- TradingView-style Candle Countdown Badge ---------- */
+  const cdEl = document.createElement('div');
+  cdEl.style.cssText = 'position:absolute;right:0;z-index:12;pointer-events:none;background:#131722;color:#ffffff;font:500 11px/16px ' + mono + ';text-align:center;border-radius:0 0 3px 3px;padding:0 4px;display:none;font-variant-numeric:tabular-nums';
+  wrap.appendChild(cdEl);
+
+  function fmtCountdown(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec >= 86400) {
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      return `${d}d ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    }
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  function nextBarCloseWall(tf, nowWall) {
+    if (tf < 86400) return bucketKey(nowWall, tf, true) + tf;
+    const d = new Date((nowWall + 21600) * 1000);
+    const y = d.getUTCFullYear(), m = d.getUTCMonth(), day = d.getUTCDate();
+    if (tf === 86400) return Date.UTC(y, m, day + 1) / 1000 - 21600;
+    if (tf === 604800) {
+      const dow = (d.getUTCDay() + 6) % 7;
+      return Date.UTC(y, m, day - dow + 7) / 1000 - 21600;
+    }
+    if (tf === 2592000) return Date.UTC(y, m + 1, 1) / 1000 - 21600;
+    if (tf === 7776000) return Date.UTC(y, Math.floor(m / 3) * 3 + 3, 1) / 1000 - 21600;
+    if (tf === 15552000) return Date.UTC(y, m < 6 ? 6 : 12, 1) / 1000 - 21600;
+    return Date.UTC(y + 1, 0, 1) / 1000 - 21600;
+  }
+
+  let lastCdTxt = '', lastCdTop = -1, lastCdW = -1;
+  function updateCountdown() {
+    const last = S.bars[S.bars.length - 1];
+    if (!last || S.source !== 'live') { cdEl.style.display = 'none'; return; }
+    let y = candle.priceToCoordinate(last.close), pw = 0, ph = wrap.clientHeight;
+    try {
+      pw = chart.priceScale('right').width();
+      const p0 = chart.panes && chart.panes()[0];
+      const h = p0 && p0.getHeight && p0.getHeight();
+      if (Number.isFinite(h) && h > 0) ph = h;
+    } catch (e) {}
+    if (y == null || !Number.isFinite(y) || pw <= 0) { cdEl.style.display = 'none'; return; }
+    const cy = Math.max(10, Math.min(ph - 10, y));
+    const top = Math.round(cy + 25 <= ph ? cy + 9 : cy - 25);
+    const nowWall = etWall(Date.now() / 1000);
+    const txt = fmtCountdown(nextBarCloseWall(S.tf, nowWall) - nowWall);
+    if (cdEl.style.display !== 'block') cdEl.style.display = 'block';
+    if (txt !== lastCdTxt) { cdEl.textContent = txt; lastCdTxt = txt; }
+    if (top !== lastCdTop) { cdEl.style.top = top + 'px'; lastCdTop = top; }
+    const w = Math.round(pw);
+    if (w !== lastCdW) { cdEl.style.width = w + 'px'; lastCdW = w; }
+  }
+
   function detectPrecision(bars) {
     if (!bars || !bars.length) return 2;
     const sample = bars.slice(-100);
@@ -144,12 +202,14 @@ async function boot() {
       if (S.bars.length) { const n = S.bars.length; ts.setVisibleLogicalRange({ from: Math.max(0, n - 120), to: n + 8 }); }
     }
     showOhlc(S.bars[S.bars.length - 1]); S.dirty = true; updateDataInfo();
+    updateCountdown();
   }
   function softRebuild() {
     S.bars = resample(S.base, S.tf, S.source === 'live', S.baseRes);
     if (S.bars.length) applyPricePrecision(S.bars);
     candle.setData(S.bars); indLen = -1; refreshInds();
     showOhlc(S.bars[S.bars.length - 1]); S.dirty = true; updateDataInfo();
+    updateCountdown();
   }
   function updateChips() {
     const c = $('#srcChip'), live = S.source === 'live';
@@ -254,6 +314,7 @@ async function boot() {
     isCrossActive: () => crossActive,
     updateLiveCandle(b) {
       try { candle.update(b); } catch (e) {}
+      updateCountdown();
     }
   });
 
@@ -267,6 +328,8 @@ async function boot() {
   new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTimeout(applyTheme, 50));
   drawings.startLoop();
+  setInterval(updateCountdown, 250);
+  (function cdLoop() { updateCountdown(); requestAnimationFrame(cdLoop); })();
 }
 
 window.__nclStart = boot;
