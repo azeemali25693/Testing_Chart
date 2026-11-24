@@ -23,13 +23,74 @@ const HINTS = {
 const ONE = { hline: 1, vline: 1, note: 1 };
 const FIB = [0, .236, .382, .5, .618, .786, 1];
 const MONO = "'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace";
+const UIF = "'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+
+function rectCfg(d) {
+  return {
+    extend: d.extend || 'none',
+    borderOn: d.borderOn ?? true,
+    borderColor: d.borderColor || d.color || '#2563eb',
+    borderWidth: d.borderWidth ?? (d.width || 1),
+    midOn: d.midOn ?? false,
+    midColor: d.midColor || '#9333ea',
+    midStyle: d.midStyle || 'dashed',
+    bgOn: d.bgOn ?? true,
+    bgColor: d.bgColor || d.color || '#5eb162',
+    bgAlpha: d.bgAlpha ?? 0.24,
+    text: d.text || '',
+    textColor: d.textColor || '#1e2631',
+    fontSize: d.fontSize || 14,
+    bold: !!d.bold,
+    italic: !!d.italic,
+    vAlign: d.vAlign || 'middle',
+    hAlign: d.hAlign || 'center'
+  };
+}
+
+function injectRectModalCSS() {
+  if (document.getElementById('rm-css')) return;
+  const st = document.createElement('style');
+  st.id = 'rm-css';
+  st.textContent = `
+    #rmWrap{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;justify-content:flex-end;font-family:${UIF}}
+    #rmWrap[hidden]{display:none}
+    .rm-back{position:absolute;inset:0;background:rgba(4,7,11,.5)}
+    .rm-card{position:relative;background:var(--panel);color:var(--fg);border-radius:16px 16px 0 0;border-top:1px solid var(--line);max-height:86%;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom,0px)}
+    .rm-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px}
+    .rm-head h2{margin:0;font-size:17px;font-weight:600}
+    .rm-x{width:32px;height:32px;border-radius:8px;font-size:20px;line-height:1;color:var(--mute);display:grid;place-items:center}
+    .rm-tabs{display:flex;gap:20px;padding:0 16px;border-bottom:1px solid var(--line)}
+    .rm-tab{padding:10px 2px;font-size:14px;font-weight:500;color:var(--mute);border-bottom:2px solid transparent}
+    .rm-tab[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--fg);font-weight:600}
+    .rm-body{overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+    .rm-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:36px}
+    .rm-lbl{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:500;cursor:pointer}
+    .rm-lbl input[type=checkbox]{width:20px;height:20px;accent-color:var(--fg);margin:0}
+    .rm-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .rm-col{width:34px;height:32px;padding:2px;border-radius:7px;border:1px solid var(--line);background:var(--raise);cursor:pointer}
+    .rm-sel{padding:7px 10px;border-radius:8px;background:var(--raise);border:1px solid var(--line);color:var(--fg);font-size:13px}
+    .rm-px{display:flex;gap:4px}
+    .rm-px button{padding:5px 9px;border-radius:7px;background:var(--raise);border:1px solid var(--line);font-size:12px}
+    .rm-px button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+    .rm-ta{width:100%;min-height:92px;padding:10px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line);color:var(--fg);font:14px/1.4 ${UIF};resize:vertical}
+    .rm-bi{width:34px;height:32px;border-radius:8px;background:var(--raise);border:1px solid var(--line);font-size:14px;display:grid;place-items:center}
+    .rm-bi[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+    .rm-foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid var(--line)}
+    .rm-btn{padding:9px 18px;border-radius:9px;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--raise)}
+    .rm-btn.ok{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+    .rm-rng{width:95px;accent-color:var(--accent)}
+  `;
+  document.head.appendChild(st);
+}
 
 export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart, candle, ts }) {
+  injectRectModalCSS();
   ov.style.zIndex = '10';
   const hintEl = $('#hint');
   if (hintEl) hintEl.style.zIndex = '11';
   const ctx = ov.getContext('2d');
   let clearTimer = null;
+  let lastTap = { id: null, t: 0 };
 
   function timeToLogical(t) {
     const b = S.bars, n = b.length;
@@ -106,10 +167,175 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     else { h.hidden = false; h.textContent = HINTS[t] || ''; }
   }
   function select(id) { S.selected = id; S.dirty = true; renderSel(); }
+
+  /* ---------- Rectangle Settings Modal (Style + Text) ---------- */
+  let rmWrap = null, rmTarget = null, rmSnap = null, rmTab = 'style';
+  function ensureModal() {
+    if (rmWrap) return;
+    rmWrap = document.createElement('div');
+    rmWrap.id = 'rmWrap';
+    rmWrap.hidden = true;
+    rmWrap.innerHTML = `
+      <div class="rm-back" data-rm-cancel></div>
+      <div class="rm-card">
+        <div class="rm-head"><h2>Rectangle</h2><button class="rm-x" type="button" data-rm-cancel aria-label="Close">×</button></div>
+        <div class="rm-tabs" role="tablist">
+          <button class="rm-tab" type="button" data-rm-tab="style" aria-selected="true">Style</button>
+          <button class="rm-tab" type="button" data-rm-tab="text" aria-selected="false">Text</button>
+        </div>
+        <div class="rm-body" id="rmBody"></div>
+        <div class="rm-foot">
+          <button class="rm-btn" type="button" data-rm-cancel>Cancel</button>
+          <button class="rm-btn ok" type="button" data-rm-ok>Ok</button>
+        </div>
+      </div>`;
+    document.body.appendChild(rmWrap);
+
+    rmWrap.addEventListener('click', e => {
+      if (e.target.closest('[data-rm-cancel]')) {
+        if (rmTarget && rmSnap) { Object.assign(rmTarget, rmSnap); S.dirty = true; renderSel(); }
+        rmWrap.hidden = true; rmTarget = null; rmSnap = null;
+        return;
+      }
+      if (e.target.closest('[data-rm-ok]')) {
+        saveDraw(); renderSel(); S.dirty = true;
+        rmWrap.hidden = true; rmTarget = null; rmSnap = null;
+        return;
+      }
+      const tb = e.target.closest('[data-rm-tab]');
+      if (tb) { rmTab = tb.dataset.rmTab; renderModalBody(); return; }
+      const pxb = e.target.closest('[data-rm-bw]');
+      if (pxb && rmTarget) {
+        rmTarget.borderWidth = +pxb.dataset.rmBw;
+        rmTarget.borderOn = true;
+        S.dirty = true; renderModalBody();
+      }
+      const bi = e.target.closest('[data-rm-toggle]');
+      if (bi && rmTarget) {
+        const k = bi.dataset.rmToggle;
+        rmTarget[k] = !rmTarget[k];
+        S.dirty = true; renderModalBody();
+      }
+    });
+
+    rmWrap.addEventListener('input', e => {
+      if (!rmTarget) return;
+      const el = e.target, k = el.dataset.rmKey;
+      if (!k) return;
+      if (el.type === 'checkbox') rmTarget[k] = el.checked;
+      else if (k === 'bgAlpha' || k === 'fontSize') rmTarget[k] = parseFloat(el.value);
+      else rmTarget[k] = el.value;
+      S.dirty = true;
+    });
+    rmWrap.addEventListener('change', e => {
+      if (!rmTarget) return;
+      const el = e.target, k = el.dataset.rmKey;
+      if (!k) return;
+      if (el.type === 'checkbox') rmTarget[k] = el.checked;
+      else if (k === 'bgAlpha' || k === 'fontSize') rmTarget[k] = parseFloat(el.value);
+      else rmTarget[k] = el.value;
+      S.dirty = true; renderSel();
+    });
+  }
+
+  function renderModalBody() {
+    if (!rmWrap || !rmTarget) return;
+    rmWrap.querySelectorAll('[data-rm-tab]').forEach(t => t.setAttribute('aria-selected', t.dataset.rmTab === rmTab));
+    const c = rectCfg(rmTarget), body = rmWrap.querySelector('#rmBody');
+    if (rmTab === 'style') {
+      body.innerHTML = `
+        <div class="rm-row">
+          <span class="rm-lbl">Extend</span>
+          <select class="rm-sel" data-rm-key="extend">
+            <option value="none"${c.extend === 'none' ? ' selected' : ''}>Don't extend</option>
+            <option value="left"${c.extend === 'left' ? ' selected' : ''}>Extend left</option>
+            <option value="right"${c.extend === 'right' ? ' selected' : ''}>Extend right</option>
+            <option value="both"${c.extend === 'both' ? ' selected' : ''}>Extend both</option>
+          </select>
+        </div>
+        <div class="rm-row">
+          <label class="rm-lbl"><input type="checkbox" data-rm-key="borderOn"${c.borderOn ? ' checked' : ''}>Border</label>
+          <div class="rm-ctrl">
+            <input class="rm-col" type="color" data-rm-key="borderColor" value="${c.borderColor}">
+            <div class="rm-px">
+              ${[1, 2, 3, 4].map(w => `<button type="button" data-rm-bw="${w}" aria-pressed="${c.borderWidth === w}">${w}px</button>`).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="rm-row">
+          <label class="rm-lbl"><input type="checkbox" data-rm-key="midOn"${c.midOn ? ' checked' : ''}>Middle line</label>
+          <div class="rm-ctrl">
+            <input class="rm-col" type="color" data-rm-key="midColor" value="${c.midColor}">
+            <select class="rm-sel" data-rm-key="midStyle">
+              <option value="dashed"${c.midStyle === 'dashed' ? ' selected' : ''}>Dashed</option>
+              <option value="solid"${c.midStyle === 'solid' ? ' selected' : ''}>Solid</option>
+              <option value="dotted"${c.midStyle === 'dotted' ? ' selected' : ''}>Dotted</option>
+            </select>
+          </div>
+        </div>
+        <div class="rm-row">
+          <label class="rm-lbl"><input type="checkbox" data-rm-key="bgOn"${c.bgOn ? ' checked' : ''}>Background</label>
+          <div class="rm-ctrl">
+            <input class="rm-col" type="color" data-rm-key="bgColor" value="${c.bgColor}">
+            <input class="rm-rng" type="range" min="0.05" max="0.85" step="0.05" data-rm-key="bgAlpha" value="${c.bgAlpha}">
+          </div>
+        </div>`;
+    } else {
+      body.innerHTML = `
+        <div class="rm-row" style="justify-content:flex-start">
+          <input class="rm-col" type="color" data-rm-key="textColor" value="${c.textColor}">
+          <select class="rm-sel" data-rm-key="fontSize">
+            ${[10, 12, 14, 16, 18, 20, 24].map(s => `<option value="${s}"${c.fontSize === s ? ' selected' : ''}>${s}</option>`).join('')}
+          </select>
+          <button class="rm-bi" type="button" data-rm-toggle="bold" aria-pressed="${c.bold}"><b>B</b></button>
+          <button class="rm-bi" type="button" data-rm-toggle="italic" aria-pressed="${c.italic}"><i>I</i></button>
+        </div>
+        <textarea class="rm-ta" data-rm-key="text" placeholder="Add text">${esc(c.text)}</textarea>
+        <div class="rm-row">
+          <span class="rm-lbl">Text alignment</span>
+          <div class="rm-ctrl">
+            <select class="rm-sel" data-rm-key="vAlign">
+              <option value="top"${c.vAlign === 'top' ? ' selected' : ''}>Top</option>
+              <option value="middle"${c.vAlign === 'middle' ? ' selected' : ''}>Middle</option>
+              <option value="bottom"${c.vAlign === 'bottom' ? ' selected' : ''}>Bottom</option>
+            </select>
+            <select class="rm-sel" data-rm-key="hAlign">
+              <option value="left"${c.hAlign === 'left' ? ' selected' : ''}>Left</option>
+              <option value="center"${c.hAlign === 'center' ? ' selected' : ''}>Center</option>
+              <option value="right"${c.hAlign === 'right' ? ' selected' : ''}>Right</option>
+            </select>
+          </div>
+        </div>`;
+    }
+  }
+
+  function openRectSettings(d, tab = 'style') {
+    ensureModal();
+    Object.assign(d, rectCfg(d));
+    rmTarget = d;
+    rmSnap = { ...d };
+    rmTab = tab;
+    renderModalBody();
+    rmWrap.hidden = false;
+  }
+
   function renderSel() {
     const bar = $('#selbar'), d = S.drawings.find(x => x.id === S.selected);
     if (!d) { bar.hidden = true; bar.innerHTML = ''; return; }
     bar.hidden = false;
+    if (d.type === 'rect') {
+      const c = rectCfg(d);
+      const extLbl = c.extend === 'none' ? 'Extend' : ('Ext: ' + c.extend);
+      bar.innerHTML =
+        `<button class="btn sm pri" data-rect-set="style" type="button">Settings</button>`
+        + `<button class="btn sm" data-rect-set="text" type="button">Text</button>`
+        + `<button class="btn sm" data-rect-mid type="button" aria-pressed="${c.midOn}">Mid</button>`
+        + `<button class="btn sm" data-rect-ext type="button" aria-pressed="${c.extend !== 'none'}">${extLbl}</button>`
+        + `<input type="color" data-rect-col="bgColor" value="${c.bgColor}" title="Fill color" style="width:28px;height:28px;padding:0;border-radius:50%;border:2px solid var(--panel)">`
+        + `<input type="color" data-rect-col="borderColor" value="${c.borderColor}" title="Border color" style="width:28px;height:28px;padding:0;border-radius:50%;border:2px solid var(--panel)">`
+        + '<button class="btn sm" data-del type="button" style="margin-left:auto;color:var(--down)">Delete</button>';
+      return;
+    }
     bar.innerHTML = PAL.map(c => `<button class="sw" data-c="${c}" style="background:${c}" type="button" aria-label="Color ${c}" aria-pressed="${d.color === c}"></button>`).join('')
       + [1, 2, 4].map(w => `<button class="btn sm" data-w="${w}" type="button" aria-pressed="${(d.width || 2) === w}">${w}px</button>`).join('')
       + (d.type === 'note' ? `<label class="field" style="flex:1;min-width:120px" for="selText">Text</label><input id="selText" type="text" value="${esc(d.text || '')}" autocomplete="off">` : '')
@@ -128,15 +354,26 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
   $('#selbar').addEventListener('click', e => {
     const d = S.drawings.find(x => x.id === S.selected); if (!d) return;
     const t = e.target.closest('button'); if (!t) return;
-    if (t.dataset.c) d.color = t.dataset.c;
+    if (t.dataset.rectSet) { openRectSettings(d, t.dataset.rectSet); return; }
+    if ('rectMid' in t.dataset) { d.midOn = !rectCfg(d).midOn; if (d.midColor == null) d.midColor = '#9333ea'; }
+    else if ('rectExt' in t.dataset) {
+      const ord = ['none', 'right', 'left', 'both'];
+      d.extend = ord[(ord.indexOf(d.extend || 'none') + 1) % ord.length];
+    }
+    else if (t.dataset.c) d.color = t.dataset.c;
     else if (t.dataset.w) d.width = +t.dataset.w;
     else if ('del' in t.dataset) { S.drawings = S.drawings.filter(x => x !== d); S.selected = null; }
     saveDraw(); S.dirty = true; renderSel();
   });
   $('#selbar').addEventListener('input', e => {
-    if (e.target.id === 'selText') {
-      const d = S.drawings.find(x => x.id === S.selected);
-      if (d) { d.text = e.target.value; saveDraw(); S.dirty = true; }
+    const d = S.drawings.find(x => x.id === S.selected); if (!d) return;
+    if (e.target.id === 'selText') { d.text = e.target.value; saveDraw(); S.dirty = true; }
+    else if (e.target.dataset.rectCol) {
+      const k = e.target.dataset.rectCol;
+      d[k] = e.target.value;
+      if (k === 'bgColor') d.bgOn = true;
+      if (k === 'borderColor') d.borderOn = true;
+      saveDraw(); S.dirty = true;
     }
   });
 
@@ -151,8 +388,17 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     return P.every(p => p.x != null && p.y != null && Number.isFinite(p.x) && Number.isFinite(p.y)) ? P : null;
   }
   function rayEnd(a, b) { const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1; return { x: a.x + dx / l * 6000, y: a.y + dy / l * 6000 }; }
+  function rectScreenBounds(d, P, pr) {
+    const c = rectCfg(d);
+    const rx1 = Math.min(P[0].x, P[1].x), rx2 = Math.max(P[0].x, P[1].x);
+    const y1 = Math.min(P[0].y, P[1].y), y2 = Math.max(P[0].y, P[1].y);
+    const x1 = (c.extend === 'left' || c.extend === 'both') ? 0 : rx1;
+    const x2 = (c.extend === 'right' || c.extend === 'both') ? pr.w : rx2;
+    return { x1, x2, y1, y2, c };
+  }
+
   function hitTest(x, y, touch) {
-    const r = touch ? 18 : 10, hr = touch ? 22 : 13, p = { x, y };
+    const r = touch ? 18 : 10, hr = touch ? 22 : 13, p = { x, y }, pr = plotRect();
     for (let k = S.drawings.length - 1; k >= 0; k--) {
       const d = S.drawings[k], P = screenPts(d); if (!P) continue;
       for (let i = 0; i < P.length; i++) if (Math.hypot(P[i].x - x, P[i].y - y) <= hr) return { d, handle: i };
@@ -162,7 +408,12 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
         case 'ray': hit = dseg(p, P[0], rayEnd(P[0], P[1])) <= r; break;
         case 'hline': hit = Math.abs(y - P[0].y) <= r; break;
         case 'vline': hit = Math.abs(x - P[0].x) <= r; break;
-        case 'rect': case 'measure': {
+        case 'rect': {
+          const b = rectScreenBounds(d, P, pr);
+          hit = x >= b.x1 - r && x <= b.x2 + r && y >= b.y1 - r && y <= b.y2 + r;
+          break;
+        }
+        case 'measure': {
           const x1 = Math.min(P[0].x, P[1].x), x2 = Math.max(P[0].x, P[1].x);
           const y1 = Math.min(P[0].y, P[1].y), y2 = Math.max(P[0].y, P[1].y);
           hit = x >= x1 - r && x <= x2 + r && y >= y1 - r && y <= y2 + r;
@@ -191,7 +442,15 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
   function startCreate(x, y) {
     const pt = toPoint(x, y, true); if (!pt) return;
     if (S.creating) { S.creating.d.pts[1] = pt; finishCreate(); return; }
-    const d = { id: uid(), type: S.tool, pts: ONE[S.tool] ? [pt] : [pt, { ...pt }], color: PAL[0], width: 2, text: S.tool === 'note' ? 'Note' : '' };
+    const d = S.tool === 'rect'
+      ? {
+          id: uid(), type: 'rect', pts: [pt, { ...pt }], color: '#5eb162', width: 1,
+          extend: 'none', borderOn: true, borderColor: '#2563eb', borderWidth: 1,
+          midOn: false, midColor: '#9333ea', midStyle: 'dashed',
+          bgOn: true, bgColor: '#5eb162', bgAlpha: 0.24,
+          text: '', textColor: '#1e2631', fontSize: 14, bold: false, italic: false, vAlign: 'middle', hAlign: 'center'
+        }
+      : { id: uid(), type: S.tool, pts: ONE[S.tool] ? [pt] : [pt, { ...pt }], color: PAL[0], width: 2, text: S.tool === 'note' ? 'Note' : '' };
     S.drawings.push(d); S.dirty = true;
     if (ONE[S.tool]) { S.creating = { d }; finishCreate(); return; }
     S.creating = { d, sx: x, sy: y, moved: false };
@@ -206,6 +465,15 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     else {
       const h = hitTest(x, y, e.pointerType !== 'mouse');
       if (h) {
+        const now = Date.now();
+        if (h.d.type === 'rect' && lastTap.id === h.d.id && now - lastTap.t < 350) {
+          lastTap = { id: null, t: 0 };
+          select(h.d.id);
+          openRectSettings(h.d, 'style');
+          S.taken = true; e.stopPropagation(); e.preventDefault();
+          return;
+        }
+        lastTap = { id: h.d.id, t: now };
         select(h.d.id);
         S.drag = { d: h.d, handle: h.handle, sx: x, sy: y, orig: h.d.pts.map(p => ({ ...p })), l0: xToLogical(x), p0: candle.coordinateToPrice(y) };
         take = true;
@@ -263,6 +531,48 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
   }
   const fmtDur = s => { s = Math.abs(s); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
 
+  function paintRectBox(d, P, pr) {
+    const { x1, x2, y1, y2, c } = rectScreenBounds(d, P, pr);
+    const bw = Math.max(0, x2 - x1), bh = Math.max(0, y2 - y1);
+    if (c.bgOn) {
+      ctx.save(); ctx.globalAlpha = c.bgAlpha; ctx.fillStyle = c.bgColor;
+      ctx.fillRect(x1, y1, bw, bh); ctx.restore();
+    }
+    if (c.borderOn && c.borderWidth > 0) {
+      ctx.save(); ctx.strokeStyle = c.borderColor; ctx.lineWidth = c.borderWidth; ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1); ctx.lineTo(x2, y1);
+      ctx.moveTo(x1, y2); ctx.lineTo(x2, y2);
+      if (c.extend !== 'left' && c.extend !== 'both') { ctx.moveTo(x1, y1); ctx.lineTo(x1, y2); }
+      if (c.extend !== 'right' && c.extend !== 'both') { ctx.moveTo(x2, y1); ctx.lineTo(x2, y2); }
+      ctx.stroke(); ctx.restore();
+    }
+    if (c.midOn) {
+      const ym = (y1 + y2) / 2;
+      ctx.save(); ctx.strokeStyle = c.midColor; ctx.lineWidth = 1.5;
+      ctx.setLineDash(c.midStyle === 'solid' ? [] : c.midStyle === 'dotted' ? [2, 3] : [6, 4]);
+      line({ x: x1, y: ym }, { x: x2, y: ym }); ctx.restore();
+    }
+    if (c.text) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x1, y1, bw, bh); ctx.clip();
+      ctx.fillStyle = c.textColor;
+      ctx.font = `${c.italic ? 'italic ' : ''}${c.bold ? '700 ' : '500 '}${c.fontSize}px ${UIF}`;
+      ctx.textBaseline = 'middle';
+      const lines = c.text.split('\n'), lh = Math.round(c.fontSize * 1.25);
+      let tx;
+      if (c.hAlign === 'left') { ctx.textAlign = 'left'; tx = x1 + 8; }
+      else if (c.hAlign === 'right') { ctx.textAlign = 'right'; tx = Math.min(x2, pr.w) - 8; }
+      else { ctx.textAlign = 'center'; tx = (x1 + Math.min(x2, pr.w)) / 2; }
+      let sy;
+      if (c.vAlign === 'top') sy = y1 + 8 + lh / 2;
+      else if (c.vAlign === 'bottom') sy = y2 - 8 - (lines.length - 1) * lh - lh / 2;
+      else sy = (y1 + y2) / 2 - ((lines.length - 1) * lh) / 2;
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], tx, sy + i * lh);
+      ctx.restore();
+    }
+  }
+
   function paint(d, sel, pr) {
     const P = screenPts(d); if (!P) return;
     ctx.strokeStyle = d.color; ctx.fillStyle = d.color; ctx.lineWidth = d.width || 2;
@@ -272,10 +582,7 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
       case 'ray': line(P[0], rayEnd(P[0], P[1])); break;
       case 'hline': line({ x: 0, y: P[0].y }, { x: pr.w, y: P[0].y }); tag(fmt(d.pts[0].p), pr.w - 2, P[0].y, d.color, 'right'); break;
       case 'vline': line({ x: P[0].x, y: 0 }, { x: P[0].x, y: pr.h }); break;
-      case 'rect':
-        ctx.globalAlpha = .16; ctx.fillRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
-        ctx.globalAlpha = 1; ctx.strokeRect(P[0].x, P[0].y, P[1].x - P[0].x, P[1].y - P[0].y);
-        break;
+      case 'rect': paintRectBox(d, P, pr); break;
       case 'fib': {
         const x1 = Math.min(P[0].x, P[1].x), x2 = Math.max(P[0].x, P[1].x);
         for (const f of FIB) {
@@ -308,11 +615,12 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
       }
     }
     if (sel || (S.creating && S.creating.d === d)) {
+      const hc = d.type === 'rect' ? rectCfg(d).borderColor : d.color;
       ctx.setLineDash([]);
       for (const p of P) {
         ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, 6.283);
         ctx.fillStyle = '#d6dae7'; ctx.fill();
-        ctx.lineWidth = 2; ctx.strokeStyle = d.color; ctx.stroke();
+        ctx.lineWidth = 2; ctx.strokeStyle = hc; ctx.stroke();
       }
     }
   }
