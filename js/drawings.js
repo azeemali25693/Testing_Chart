@@ -33,10 +33,10 @@ function rectCfg(d) {
     borderWidth: d.borderWidth ?? (d.width || 1),
     midOn: d.midOn ?? false,
     midColor: d.midColor || '#9333ea',
-    midStyle: d.midStyle || 'dashed',
+    midStyle: d.midStyle || 'dotted',
     bgOn: d.bgOn ?? true,
     bgColor: d.bgColor || d.color || '#5eb162',
-    bgAlpha: d.bgAlpha ?? 0.24,
+    bgAlpha: d.bgAlpha ?? 0.35,
     text: d.text || '',
     textColor: d.textColor || '#1e2631',
     fontSize: d.fontSize || 14,
@@ -168,7 +168,6 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
   }
   function select(id) { S.selected = id; S.dirty = true; renderSel(); }
 
-  /* ---------- Rectangle Settings Modal (Style + Text) ---------- */
   let rmWrap = null, rmTarget = null, rmSnap = null, rmTab = 'style';
   function ensureModal() {
     if (rmWrap) return;
@@ -267,9 +266,9 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
           <div class="rm-ctrl">
             <input class="rm-col" type="color" data-rm-key="midColor" value="${c.midColor}">
             <select class="rm-sel" data-rm-key="midStyle">
+              <option value="dotted"${c.midStyle === 'dotted' ? ' selected' : ''}>Dotted</option>
               <option value="dashed"${c.midStyle === 'dashed' ? ' selected' : ''}>Dashed</option>
               <option value="solid"${c.midStyle === 'solid' ? ' selected' : ''}>Solid</option>
-              <option value="dotted"${c.midStyle === 'dotted' ? ' selected' : ''}>Dotted</option>
             </select>
           </div>
         </div>
@@ -277,7 +276,7 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
           <label class="rm-lbl"><input type="checkbox" data-rm-key="bgOn"${c.bgOn ? ' checked' : ''}>Background</label>
           <div class="rm-ctrl">
             <input class="rm-col" type="color" data-rm-key="bgColor" value="${c.bgColor}">
-            <input class="rm-rng" type="range" min="0.05" max="0.85" step="0.05" data-rm-key="bgAlpha" value="${c.bgAlpha}">
+            <input class="rm-rng" type="range" min="0.05" max="0.95" step="0.05" data-rm-key="bgAlpha" value="${c.bgAlpha}">
           </div>
         </div>`;
     } else {
@@ -445,10 +444,10 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
     const d = S.tool === 'rect'
       ? {
           id: uid(), type: 'rect', pts: [pt, { ...pt }], color: '#5eb162', width: 1,
-          extend: 'none', borderOn: true, borderColor: '#2563eb', borderWidth: 1,
-          midOn: false, midColor: '#9333ea', midStyle: 'dashed',
-          bgOn: true, bgColor: '#5eb162', bgAlpha: 0.24,
-          text: '', textColor: '#1e2631', fontSize: 14, bold: false, italic: false, vAlign: 'middle', hAlign: 'center'
+          extend: 'none', borderOn: false, borderColor: '#2563eb', borderWidth: 1,
+          midOn: true, midColor: '#1e2631', midStyle: 'dotted',
+          bgOn: true, bgColor: '#5eb162', bgAlpha: 0.35,
+          text: '', textColor: '#1e2631', fontSize: 14, bold: false, italic: false, vAlign: 'middle', hAlign: 'right'
         }
       : { id: uid(), type: S.tool, pts: ONE[S.tool] ? [pt] : [pt, { ...pt }], color: PAL[0], width: 2, text: S.tool === 'note' ? 'Note' : '' };
     S.drawings.push(d); S.dirty = true;
@@ -547,28 +546,56 @@ export function initDrawings({ S, store, $, esc, uid, css, fmt, wrap, ov, chart,
       if (c.extend !== 'right' && c.extend !== 'both') { ctx.moveTo(x2, y1); ctx.lineTo(x2, y2); }
       ctx.stroke(); ctx.restore();
     }
-    if (c.midOn) {
-      const ym = (y1 + y2) / 2;
-      ctx.save(); ctx.strokeStyle = c.midColor; ctx.lineWidth = 1.5;
-      ctx.setLineDash(c.midStyle === 'solid' ? [] : c.midStyle === 'dotted' ? [2, 3] : [6, 4]);
-      line({ x: x1, y: ym }, { x: x2, y: ym }); ctx.restore();
-    }
+
+    let gap = null;
     if (c.text) {
       ctx.save();
-      ctx.beginPath(); ctx.rect(x1, y1, bw, bh); ctx.clip();
-      ctx.fillStyle = c.textColor;
       ctx.font = `${c.italic ? 'italic ' : ''}${c.bold ? '700 ' : '500 '}${c.fontSize}px ${UIF}`;
-      ctx.textBaseline = 'middle';
       const lines = c.text.split('\n'), lh = Math.round(c.fontSize * 1.25);
-      let tx;
-      if (c.hAlign === 'left') { ctx.textAlign = 'left'; tx = x1 + 8; }
-      else if (c.hAlign === 'right') { ctx.textAlign = 'right'; tx = Math.min(x2, pr.w) - 8; }
-      else { ctx.textAlign = 'center'; tx = (x1 + Math.min(x2, pr.w)) / 2; }
+      let maxW = 0;
+      for (const ln of lines) maxW = Math.max(maxW, ctx.measureText(ln).width);
+      let tx, gx1, gx2;
+      if (c.hAlign === 'left') { tx = x1 + 8; gx1 = tx; gx2 = tx + maxW; }
+      else if (c.hAlign === 'right') { tx = Math.min(x2, pr.w) - 8; gx1 = tx - maxW; gx2 = tx; }
+      else { tx = (x1 + Math.min(x2, pr.w)) / 2; gx1 = tx - maxW / 2; gx2 = tx + maxW / 2; }
       let sy;
       if (c.vAlign === 'top') sy = y1 + 8 + lh / 2;
       else if (c.vAlign === 'bottom') sy = y2 - 8 - (lines.length - 1) * lh - lh / 2;
       else sy = (y1 + y2) / 2 - ((lines.length - 1) * lh) / 2;
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], tx, sy + i * lh);
+      gap = {
+        lines, lh, tx, sy,
+        font: ctx.font,
+        align: c.hAlign,
+        gx1: gx1 - 6, gx2: gx2 + 6,
+        ty1: sy - lh / 2, ty2: sy + (lines.length - 1) * lh + lh / 2
+      };
+      ctx.restore();
+    }
+
+    if (c.midOn) {
+      const ym = Math.round((y1 + y2) / 2) + 0.5;
+      ctx.save();
+      ctx.strokeStyle = c.midColor;
+      ctx.lineWidth = 1;
+      ctx.lineCap = 'butt';
+      ctx.setLineDash(c.midStyle === 'solid' ? [] : c.midStyle === 'dotted' ? [1.2, 3.8] : [5, 4]);
+      if (gap && ym >= gap.ty1 - 2 && ym <= gap.ty2 + 2) {
+        if (gap.gx1 > x1) line({ x: x1, y: ym }, { x: Math.min(x2, gap.gx1), y: ym });
+        if (gap.gx2 < x2) line({ x: Math.max(x1, gap.gx2), y: ym }, { x: x2, y: ym });
+      } else {
+        line({ x: x1, y: ym }, { x: x2, y: ym });
+      }
+      ctx.restore();
+    }
+
+    if (gap) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x1, y1, bw, bh); ctx.clip();
+      ctx.fillStyle = c.textColor;
+      ctx.font = gap.font;
+      ctx.textAlign = gap.align;
+      ctx.textBaseline = 'middle';
+      for (let i = 0; i < gap.lines.length; i++) ctx.fillText(gap.lines[i], gap.tx, gap.sy + i * gap.lh);
       ctx.restore();
     }
   }
