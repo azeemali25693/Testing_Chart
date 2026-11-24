@@ -1,17 +1,16 @@
-import { etWall, resample, bucketKey } from './ta.js';
-
 const CAP_DEFAULT = { key: '9uvqWDasKOkjnrdD', email: 'azeemali25693@gmail.com', pw: 'azeem@123A' };
-const RES_LIST = [['MINUTE', 60], ['MINUTE_5', 300], ['MINUTE_15', 900], ['HOUR', 3600], ['DAY', 86400]];
-const MAX_PAGES = 6, MAX_BARS = 10000;
+const RES_ORDER = [['MINUTE', 60], ['MINUTE_5', 300], ['MINUTE_15', 900], ['HOUR', 3600], ['DAY', 86400]];
+const RES_SEC = { MINUTE: 60, MINUTE_5: 300, MINUTE_15: 900, HOUR: 3600, DAY: 86400 };
+const MAX_BARS = 12000;
 
 export function initCapital(app) {
-  const { S, store, $, esc, wrap, ts, fmt } = app;
+  const { S, store, $, esc, wrap, ts, fmt, etWall, resample, bucketKey, resForTf } = app;
   const CAP = { cst: null, tok: null, sig: '' };
   let capTimer = null, ws = null, wsWanted = false, wsPing = null;
   let lastTick = 0, lastPollOk = 0, liveOn = false;
   let flushPend = false, indT = null, lastMsgAt = 0, lastKeep = 0;
-  let capFails = 0, loadGen = 0, userMoved = false, cacheKeyNow = '';
-  let srchTimer = null, srchSeq = 0;
+  let capFails = 0, loadGen = 0, userMoved = false;
+  let srchTimer = null, srchSeq = 0, storeMap = {};
 
   ['pointerdown', 'wheel', 'touchstart'].forEach(ev => wrap.addEventListener(ev, () => { userMoved = true; }, { passive: true }));
 
@@ -40,9 +39,7 @@ export function initCapital(app) {
 
   function saveCfg() {
     store.set('cap', {
-      key: capKey(),
-      email: $('#capEmail').value.trim(),
-      pw: $('#capPw').value,
+      key: capKey(), email: $('#capEmail').value.trim(), pw: $('#capPw').value,
       epic: $('#capEpic').value.trim().toUpperCase() || 'US100',
       demo: $('#capDemo').getAttribute('aria-pressed') === 'true'
     });
@@ -65,7 +62,7 @@ export function initCapital(app) {
     CAP.cst = r.headers.get('CST');
     CAP.tok = r.headers.get('X-SECURITY-TOKEN');
     CAP.sig = capSig();
-    if (!CAP.cst || !CAP.tok) throw new Error('Session tokens missing (CORS).');
+    if (!CAP.cst || !CAP.tok) throw new Error('Session tokens missing.');
   }
   async function capGet(path, again) {
     if (!CAP.cst) await capLogin();
@@ -115,8 +112,7 @@ export function initCapital(app) {
     b.hidden = false; b.className = 'gut' + (err ? ' err' : ''); b.textContent = t;
   }
   function capErr(e) {
-    const m = $('#capMsg');
-    m.className = 'err';
+    const m = $('#capMsg'); m.className = 'err';
     m.textContent = (e && e.name === 'TypeError') ? 'Request blocked or no internet.' : String((e && e.message) || e);
     if (S.base.length) topMsg(m.textContent, true); else setLoader('error', m.textContent);
   }
@@ -146,24 +142,35 @@ export function initCapital(app) {
       try { db.transaction('bars', 'readwrite').objectStore('bars').put(v, k); } catch (e) {}
     }
   };
-  const cacheKey = epic => 'v2:' + epic + ($('#capDemo').getAttribute('aria-pressed') === 'true' ? ':demo' : ':live');
-  function saveCache() {
-    if (S.source !== 'live' || S.base.length < 50 || !cacheKeyNow || S.baseRes !== 60) return;
-    idb.set(cacheKeyNow, { t: Date.now(), bars: S.base.length > MAX_BARS ? S.base.slice(-MAX_BARS) : S.base });
+  const cacheKey = (epic, resName) => 'v3:' + epic + ':' + resName + ($('#capDemo').getAttribute('aria-pressed') === 'true' ? ':demo' : ':live');
+  function saveAllCaches() {
+    if (S.source !== 'live' || !S.symbol) return;
+    for (const [rn, entry] of Object.entries(storeMap)) {
+      if (entry && entry.bars && entry.bars.length > 20) {
+        idb.set(cacheKey(S.symbol, rn), { t: Date.now(), bars: entry.bars.slice(-MAX_BARS) });
+      }
+    }
   }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) saveCache(); });
-  addEventListener('pagehide', saveCache);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) saveAllCaches(); });
+  addEventListener('pagehide', saveAllCaches);
 
-  function mergeBars(bars) {
+  function getEntry(resName) {
+    if (!storeMap[resName]) storeMap[resName] = { bars: [], oldestUtc: null, done: false, busy: false, gapJumped: false, cacheLast: null };
+    return storeMap[resName];
+  }
+
+  function mergeIntoChart(bars, isActive) {
     const oldFirst = S.bars.length ? S.bars[0].time : null;
     let r = null; try { r = ts.getVisibleLogicalRange(); } catch (e) {}
-    let b = sortDedup(S.base.concat(bars));
-    if (b.length > MAX_BARS) b = b.slice(-MAX_BARS);
-    S.base = b; app.softRebuild();
+    S.base = bars;
+    if (!isActive) return;
+    app.softRebuild();
     if (!S.bars.length) return;
     try {
-      if (!userMoved) { const n = S.bars.length; ts.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 10 }); }
-      else if (r && oldFirst != null) {
+      if (!userMoved) {
+        const n = S.bars.length;
+        ts.setVisibleLogicalRange({ from: Math.max(0, n - 120), to: n + 8 });
+      } else if (r && oldFirst != null) {
         let lo = 0, hi = S.bars.length;
         while (lo < hi) { const m = (lo + hi) >> 1; if (S.bars[m].time < oldFirst) lo = m + 1; else hi = m; }
         if (lo) ts.setVisibleLogicalRange({ from: r.from + lo, to: r.to + lo });
@@ -171,95 +178,179 @@ export function initCapital(app) {
     } catch (e) {}
   }
 
+  async function fetchNextPage(epic, resName, gen) {
+    const alive = () => gen === loadGen;
+    const entry = getEntry(resName);
+    if (entry.busy || entry.done) return false;
+    entry.busy = true;
+    const resSec = RES_SEC[resName] || 60;
+    try {
+      const to = entry.oldestUtc != null ? entry.oldestUtc - resSec : null;
+      let pg = null;
+      try {
+        pg = await capPage(epic, 1000, to, resName);
+      } catch (e) {
+        if (!alive()) return false;
+        if (isNotFound(e)) {
+          if (to != null && !entry.gapJumped) {
+            entry.gapJumped = true;
+            entry.oldestUtc -= 52 * 3600;
+            entry.busy = false;
+            return fetchNextPage(epic, resName, gen);
+          }
+          entry.done = true;
+          return false;
+        }
+        await new Promise(r => setTimeout(r, 900));
+        if (!alive()) return false;
+        try { pg = await capPage(epic, 1000, to, resName); }
+        catch (e2) { if (isNotFound(e2)) { entry.done = true; return false; } throw e2; }
+      }
+      if (!alive()) return false;
+      if (!pg || !pg.length) { entry.done = true; return false; }
+      entry.gapJumped = false;
+      let first = Infinity; for (const x of pg) if (x.utc < first) first = x.utc;
+      if (entry.oldestUtc == null || first < entry.oldestUtc) entry.oldestUtc = first;
+      const newBars = pg.map(x => x.bar);
+      let minT = Infinity; for (const b of newBars) if (b.time < minT) minT = b.time;
+      let merged = sortDedup(entry.bars.concat(newBars));
+      if (merged.length > MAX_BARS) merged = merged.slice(-MAX_BARS);
+      entry.bars = merged;
+      if (entry.cacheLast != null && to != null && minT <= entry.cacheLast) entry.done = true;
+      if (pg.length < 1000) entry.done = true;
+      if (S.baseResName === resName) {
+        if (to == null && entry.cacheLast == null) {
+          app.setBase(entry.bars, 'live', 'Capital.com, ' + resName.toLowerCase().replace('_', ' ') + ' mid prices.');
+        } else {
+          mergeIntoChart(entry.bars, true);
+        }
+      }
+      return true;
+    } finally {
+      entry.busy = false;
+    }
+  }
+
+  async function preloadAll(epic, activeRes, gen) {
+    const alive = () => gen === loadGen;
+    const order = ['DAY', 'HOUR', 'MINUTE_15', 'MINUTE_5', 'MINUTE'].filter(r => r !== activeRes);
+    for (const rn of order) {
+      if (!alive()) return;
+      try { await fetchNextPage(epic, rn, gen); } catch (e) {}
+      await new Promise(r => setTimeout(r, 140));
+    }
+    // Load deeper history (pages 2..4) for active resolution & DAY so scrolling back is instant
+    const deep = [activeRes, 'DAY'].filter((v, i, a) => a.indexOf(v) === i);
+    for (let round = 0; round < 3; round++) {
+      for (const rn of deep) {
+        if (!alive()) return;
+        const entry = getEntry(rn);
+        if (entry.done || entry.bars.length >= MAX_BARS) continue;
+        try { await fetchNextPage(epic, rn, gen); } catch (e) {}
+        await new Promise(r => setTimeout(r, 180));
+      }
+    }
+    if (alive()) saveAllCaches();
+  }
+
   async function loadMarket(epic) {
     const gen = ++loadGen, alive = () => gen === loadGen;
     const m = $('#capMsg'); m.className = 'note'; m.textContent = 'Loading...'; topMsg('');
-    setLive(false); S.source = 'none'; S.base = []; S.bars = []; S.baseRes = 60; S.baseResName = 'MINUTE';
+    setLive(false); S.source = 'none'; S.base = []; S.bars = [];
+    storeMap = {};
+    let [reqRes, reqSec] = resForTf(S.tf);
+    S.baseRes = reqSec; S.baseResName = reqRes;
     app.setSymbol(epic); $('#capEpic').value = S.symbol;
     if (capKey() && $('#capEmail').value.trim()) saveCfg();
     app.rebuild(false); app.resetAutoScale();
     $('#shData').hidden = true; userMoved = false;
-    const key = cacheKeyNow = cacheKey(epic);
-    const pCache = idb.get(key);
+
     const pSess = ensureSession().then(() => null, e => e);
-    const cached = await pCache; if (!alive()) return;
-    let cacheLast = null;
-    if (cached && cached.bars && cached.bars.length > 50) {
-      cacheLast = cached.bars[cached.bars.length - 1].time;
-      app.setBase(cached.bars, 'live', 'Capital.com, 1-minute mid prices.');
-      setLoader('off'); m.textContent = 'Showing saved data, updating...';
+    const cacheReads = await Promise.all(RES_ORDER.map(([rn]) => idb.get(cacheKey(epic, rn)).then(v => [rn, v])));
+    if (!alive()) return;
+    for (const [rn, c] of cacheReads) {
+      if (c && c.bars && c.bars.length > 5) {
+        const e = getEntry(rn);
+        e.bars = c.bars;
+        e.cacheLast = c.bars[c.bars.length - 1].time;
+      }
+    }
+    if (getEntry(reqRes).bars.length) {
+      app.setBase(getEntry(reqRes).bars, 'live', 'Capital.com, ' + reqRes.toLowerCase().replace('_', ' ') + ' mid prices.');
+      setLoader('off');
     } else setLoader('loading', 'Loading ' + epic + '...');
 
-    let pages = 0, minT = Infinity, reachedCache = false, gapJumped = false;
     try {
       const err = await pSess; if (!alive()) return; if (err) throw err;
-      let to = null;
-      for (let i = 0; i < MAX_PAGES; i++) {
-        let pg = null;
-        if (i === 0) {
-          for (const [resName, resSec] of RES_LIST) {
-            try {
-              const got = await capPage(epic, 1000, null, resName);
-              if (!alive()) return;
-              if (got.length) { pg = got; S.baseRes = resSec; S.baseResName = resName; break; }
-            } catch (e) { if (!alive()) return; if (!isNotFound(e)) throw e; }
-          }
-          if (!pg || !pg.length) {
-            if (cacheLast != null) break;
-            throw new Error('No historical price data available on Capital.com for ' + epic + '.');
-          }
-        } else {
-          try { pg = await capPage(epic, 1000, to, S.baseResName); }
-          catch (e) {
-            if (!alive()) return;
-            if (isNotFound(e)) {
-              if (!gapJumped) { gapJumped = true; to -= 52 * 3600; i--; continue; }
-              break;
-            }
-            await new Promise(r => setTimeout(r, 1200)); if (!alive()) return;
-            try { pg = await capPage(epic, 1000, to, S.baseResName); }
-            catch (e2) { if (isNotFound(e2)) break; throw e2; }
-          }
+      let loaded = await fetchNextPage(epic, reqRes, gen);
+      if (!alive()) return;
+      if (!loaded && !getEntry(reqRes).bars.length) {
+        for (const [rn, rs] of RES_ORDER) {
+          if (rn === reqRes) continue;
+          const ok = await fetchNextPage(epic, rn, gen);
+          if (!alive()) return;
+          if (ok) { reqRes = rn; reqSec = rs; S.baseRes = rs; S.baseResName = rn; loaded = true; break; }
         }
-        if (!alive()) return;
-        if (!pg || !pg.length) break;
-        pages++; gapJumped = false;
-        const bars = pg.map(x => x.bar);
-        let first = Infinity; for (const x of pg) if (x.utc < first) first = x.utc;
-        for (const x of bars) if (x.time < minT) minT = x.time;
-        if (i === 0) {
-          const note = 'Capital.com, ' + S.baseResName.toLowerCase().replace('_', ' ') + ' mid prices.';
-          if (cacheLast != null && S.baseRes === 60) mergeBars(bars);
-          else app.setBase(sortDedup(bars), 'live', note);
-          setLoader('off');
-          if (S.baseRes !== 60) topMsg('1-minute bars unavailable for ' + epic + ' — showing ' + S.baseResName.toLowerCase().replace('_', ' ') + ' bars.');
-          else topMsg('');
-          lastPollOk = Date.now();
-          setLive(true, true);
-          if (cacheLast == null) saveCache();
-        } else mergeBars(bars);
-        m.className = 'ok';
-        m.textContent = `Loaded ${S.base.length.toLocaleString()} bars for ${epic}` + (i < MAX_PAGES - 1 && pg.length >= 1000 ? ` (history ${i + 1}/${MAX_PAGES}...)` : '.');
-        if (cacheLast != null && S.baseRes === 60 && minT <= cacheLast) { reachedCache = true; break; }
-        if (pg.length < 1000) break;
-        to = first - S.baseRes;
       }
-      if (!pages && cacheLast == null) throw new Error('No bars came back for ' + epic + '.');
-      if (cacheLast != null && S.baseRes === 60 && !reachedCache && pages && isFinite(minT)) {
-        S.base = S.base.filter(x => x.time >= minT); app.softRebuild();
+      if (!loaded && !getEntry(reqRes).bars.length) {
+        throw new Error('No historical price data available on Capital.com for ' + epic + '.');
       }
-      if (pages && S.source === 'live') {
-        m.className = 'ok'; m.textContent = `Loaded ${S.base.length.toLocaleString()} bars for ${epic}.`;
-        if (S.baseRes === 60) topMsg('');
-        saveCache();
+      S.baseRes = reqSec; S.baseResName = reqRes;
+      if (getEntry(reqRes).bars.length && S.source !== 'live') {
+        app.setBase(getEntry(reqRes).bars, 'live', 'Capital.com, ' + reqRes.toLowerCase().replace('_', ' ') + ' mid prices.');
       }
+      setLoader('off'); topMsg('');
+      lastPollOk = Date.now();
+      setLive(true, true);
+      saveAllCaches();
+      preloadAll(epic, reqRes, gen);
     } catch (e) {
       if (!alive()) return;
-      if (pages) {
-        topMsg('Chart is live, but older history could not be loaded: ' + String((e && e.message) || e), true);
-        m.className = 'err'; m.textContent = 'History load stopped: ' + String((e && e.message) || e);
-      } else capErr(e);
+      capErr(e);
     }
+  }
+
+  async function switchTf(tf) {
+    const gen = loadGen;
+    const [reqRes, reqSec] = resForTf(tf);
+    S.baseRes = reqSec; S.baseResName = reqRes;
+    const entry = getEntry(reqRes);
+    if (entry.bars.length) {
+      app.setBase(entry.bars, 'live', 'Capital.com, ' + reqRes.toLowerCase().replace('_', ' ') + ' mid prices.');
+      if (!entry.done && entry.bars.length < 1500) loadMore();
+      return;
+    }
+    setLoader('loading', 'Loading ' + S.symbol + '...');
+    try {
+      await ensureSession();
+      const ok = await fetchNextPage(S.symbol, reqRes, gen);
+      if (gen !== loadGen) return;
+      if (ok && entry.bars.length) {
+        app.setBase(entry.bars, 'live', 'Capital.com, ' + reqRes.toLowerCase().replace('_', ' ') + ' mid prices.');
+      } else {
+        for (const [rn, rs] of RES_ORDER) {
+          if (getEntry(rn).bars.length) {
+            S.baseRes = rs; S.baseResName = rn;
+            app.setBase(getEntry(rn).bars, 'live', 'Capital.com');
+            break;
+          }
+        }
+      }
+      setLoader('off');
+    } catch (e) {
+      if (gen === loadGen) setLoader('off');
+    }
+  }
+
+  async function loadMore() {
+    if (S.source !== 'live' || !S.symbol) return;
+    const gen = loadGen, rn = S.baseResName;
+    const entry = getEntry(rn);
+    if (entry.busy || entry.done || entry.bars.length >= MAX_BARS) return;
+    try {
+      const ok = await fetchNextPage(S.symbol, rn, gen);
+      if (ok && gen === loadGen) saveAllCaches();
+    } catch (e) {}
   }
 
   $('#btnCap').addEventListener('click', () => loadMarket($('#capEpic').value.trim().toUpperCase() || 'US100'));
@@ -306,6 +397,24 @@ export function initCapital(app) {
   const streamOK = () => !!ws && ws.readyState === 1 && Date.now() - lastTick < 15000;
   const isLive = () => streamOK() || (liveOn && Date.now() - lastPollOk < 12000);
 
+  function updateResStores(px, utc) {
+    const wall = etWall(utc);
+    for (const [rn, rs] of RES_ORDER) {
+      const entry = storeMap[rn];
+      if (!entry || !entry.bars.length) continue;
+      const B = entry.bars, last = B[B.length - 1];
+      const tm = bucketKey(wall, rs, true);
+      if (tm < last.time) continue;
+      if (tm === last.time) {
+        if (px > last.high) last.high = px;
+        if (px < last.low) last.low = px;
+        last.close = px;
+      } else {
+        B.push({ time: tm, open: px, high: px, low: px, close: px, volume: 0 });
+      }
+    }
+  }
+
   function pushLiveBar(bar) {
     const B = S.base, last = B[B.length - 1];
     if (!last || bar.time > last.time) B.push(bar);
@@ -323,8 +432,9 @@ export function initCapital(app) {
   function liveTick(px, utc) {
     if (S.source !== 'live' || !Number.isFinite(px)) return;
     px = rnd(px);
+    updateResStores(px, utc);
     const B = S.base, last = B[B.length - 1]; if (!last) return;
-    const tm = Math.floor(etWall(utc) / S.baseRes) * S.baseRes;
+    const tm = bucketKey(etWall(utc), S.baseRes, true);
     if (tm < last.time) return;
     const bar = tm === last.time
       ? { time: tm, open: last.open, high: Math.max(last.high, px), low: Math.min(last.low, px), close: px, volume: last.volume || 0 }
@@ -332,6 +442,7 @@ export function initCapital(app) {
     lastTick = Date.now();
     pushLiveBar(bar);
   }
+
   function liveFlush() {
     flushPend = false;
     const b = S.bars[S.bars.length - 1]; if (!b) return;
@@ -344,7 +455,6 @@ export function initCapital(app) {
       lastMsgAt = now;
       const m = $('#capMsg'); m.className = 'ok';
       m.textContent = (streamOK() ? 'Live streaming. ' : 'Live (polling). ') + new Date().toLocaleTimeString() + ', price ' + fmt(b.close);
-      if (S.baseRes === 60) topMsg('');
     }
   }
   function wsStop() { wsWanted = false; clearInterval(wsPing); wsPing = null; if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} ws = null; } }
@@ -401,10 +511,11 @@ export function initCapital(app) {
         } else {
           const cut = bars[0].time;
           S.base = S.base.filter(x => x.time < cut).concat(bars);
+          const e = getEntry(S.baseResName);
+          e.bars = S.base;
           app.softRebuild();
         }
         lastPollOk = Date.now(); capFails = 0;
-        if (S.baseRes === 60) topMsg('');
         app.updateChips();
       } catch (err) {
         capFails++;
@@ -420,6 +531,8 @@ export function initCapital(app) {
   return {
     streamOK,
     isLive,
+    switchTf,
+    loadMore,
     boot() {
       if (capKey() && $('#capEmail').value.trim() && $('#capPw').value) {
         setLoader('loading', 'Loading ' + S.symbol + '...');
