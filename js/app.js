@@ -63,7 +63,7 @@ function boot() {
   const mono = "'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace";
   const chart = LW.createChart($('#chart'), {
     autoSize: true,
-    layout: { background: { type: LW.ColorType.Solid, color: CHART_BG }, textColor: AXIS_TXT, fontFamily: mono, fontSize: 11 },
+    layout: { attributionLogo: false, background: { type: LW.ColorType.Solid, color: CHART_BG }, textColor: AXIS_TXT, fontFamily: mono, fontSize: 11 },
     grid: { vertLines: { visible: false }, horzLines: { visible: false } },
     rightPriceScale: { borderColor: AXIS_LINE, scaleMargins: { top: .08, bottom: .08 } },
     timeScale: { borderColor: AXIS_LINE, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 7, minBarSpacing: 1.5 },
@@ -111,7 +111,7 @@ function boot() {
   function applyTheme() {
     wrap.style.background = CHART_BG;
     chart.applyOptions({
-      layout: { background: { type: LW.ColorType.Solid, color: CHART_BG }, textColor: AXIS_TXT },
+      layout: { attributionLogo: false, background: { type: LW.ColorType.Solid, color: CHART_BG }, textColor: AXIS_TXT },
       grid: { vertLines: { visible: false }, horzLines: { visible: false } },
       rightPriceScale: { borderColor: AXIS_LINE }, timeScale: { borderColor: AXIS_LINE }
     });
