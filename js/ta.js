@@ -157,7 +157,27 @@ export const ta = {
   }
 };
 
+export function resForTf(tf) {
+  if (tf >= 86400) return ['DAY', 86400];
+  if (tf >= 3600) return ['HOUR', 3600];
+  if (tf >= 900) return ['MINUTE_15', 900];
+  if (tf >= 300) return ['MINUTE_5', 300];
+  return ['MINUTE', 60];
+}
+
 export function bucketKey(t, tf, cfd) {
+  if (tf >= 604800) {
+    const d = new Date((t + 21600) * 1000);
+    const y = d.getUTCFullYear(), m = d.getUTCMonth(), day = d.getUTCDate();
+    if (tf === 604800) {
+      const dow = (d.getUTCDay() + 6) % 7;
+      return Date.UTC(y, m, day - dow) / 1000;
+    }
+    if (tf === 2592000) return Date.UTC(y, m, 1) / 1000;
+    if (tf === 7776000) return Date.UTC(y, Math.floor(m / 3) * 3, 1) / 1000;
+    if (tf === 15552000) return Date.UTC(y, m < 6 ? 0 : 6, 1) / 1000;
+    return Date.UTC(y, 0, 1) / 1000;
+  }
   if (cfd) {
     if (tf >= 86400) return Math.floor((t + 21600) / 86400) * 86400;
     if (tf === 14400) return Math.floor((t - 7200) / 14400) * 14400 + 7200;
@@ -185,4 +205,4 @@ export function resample(base, tf, cfd, baseRes = 60) {
   }
   if (cur) out.push(cur);
   return out;
-  }
+}
